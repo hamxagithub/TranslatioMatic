@@ -10,6 +10,9 @@ SpeechRecognition>=3.10.0
 # Audio processing (required for speech recognition)
 pyaudio>=0.2.11
 
+# Google Translate API for real translation
+googletrans==4.0.0rc1
+
 # GUI framework (usually comes with Python)
 # tkinter - comes built-in with Python
 

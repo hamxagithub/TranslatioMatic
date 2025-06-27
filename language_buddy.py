@@ -25,8 +25,10 @@ except ImportError:
 try:
     from googletrans import Translator
     translator_available = True
+    google_translator = Translator()
 except ImportError:
     translator_available = False
+    google_translator = None
 
 # Language data - In a real app, this would connect to translation APIs
 LANGUAGES = {
@@ -594,92 +596,53 @@ class LanguageBuddy:
         copy_btn.pack(side="left", padx=5)
     
     def translate_text(self):
-        """Translate the input text"""
+        """Translate the input text using Google Translate API"""
         input_text = self.text_input.get("1.0", tk.END).strip()
-        
         if not input_text:
             messagebox.showwarning("No Text", "Please enter some text to translate!")
             return
         
-        # Get target language code
         target_lang = LANGUAGES.get(self.target_language.get(), "es")
-        target_lang_name = self.target_language.get()
+        translated_text = ""
         
-        # Try exact match first
-        translation = SAMPLE_TRANSLATIONS.get((input_text, target_lang))
+        # Try Google Translate first
+        if translator_available and google_translator:
+            try:
+                translation = google_translator.translate(input_text, dest=target_lang)
+                translated_text = translation.text
+            except Exception as e:
+                print(f"Google Translate error: {e}")
+                translated_text = None
         
-        # Try case-insensitive match
-        if not translation:
-            for (english_text, lang_code), trans in SAMPLE_TRANSLATIONS.items():
-                if english_text.lower() == input_text.lower() and lang_code == target_lang:
-                    translation = trans
-                    break
-        
-        # Try partial match for common phrases
-        if not translation:
-            input_lower = input_text.lower()
-            for (english_text, lang_code), trans in SAMPLE_TRANSLATIONS.items():
-                if lang_code == target_lang and english_text.lower() in input_lower:
-                    translation = trans
-                    break
-        
-        # Try word-by-word translation for simple cases
-        if not translation:
-            words = input_text.lower().split()
-            translated_words = []
+        # If Google Translate fails, use fallback dictionary
+        if not translated_text:
+            # Try exact match first
+            translated_text = SAMPLE_TRANSLATIONS.get((input_text, target_lang))
             
-            for word in words:
-                word_translation = None
-                # Look for individual word translations
+            # Try case-insensitive match
+            if not translated_text:
                 for (english_text, lang_code), trans in SAMPLE_TRANSLATIONS.items():
-                    if english_text.lower() == word and lang_code == target_lang:
-                        word_translation = trans
+                    if english_text.lower() == input_text.lower() and lang_code == target_lang:
+                        translated_text = trans
                         break
-                
-                if word_translation:
-                    translated_words.append(word_translation)
-                else:
-                    translated_words.append(f"[{word}]")  # Keep untranslated words in brackets
             
-            if translated_words and any(not word.startswith("[") for word in translated_words):
-                translation = " ".join(translated_words)
-        
-        # Simple substitution for very common words
-        if not translation:
-            simple_substitutions = {
-                "hello": {"es": "Hola", "fr": "Bonjour", "de": "Hallo", "ur": "السلام علیکم", "hi": "नमस्ते", "ar": "مرحبا", "zh": "你好", "ja": "こんにちは", "ko": "안녕하세요", "ru": "Привет", "it": "Ciao", "pt": "Olá"},
-                "thanks": {"es": "Gracias", "fr": "Merci", "de": "Danke", "ur": "شکریہ", "hi": "धन्यवाद", "ar": "شكرا", "zh": "谢谢", "ja": "ありがとう", "ko": "감사합니다", "ru": "Спасибо", "it": "Grazie", "pt": "Obrigado"},
-                "bye": {"es": "Adiós", "fr": "Au revoir", "de": "Auf Wiedersehen", "ur": "الوداع", "hi": "अलविदा", "ar": "وداعا", "zh": "再见", "ja": "さようなら", "ko": "안녕히 가세요", "ru": "До свидания", "it": "Arrivederci", "pt": "Tchau"},
-                "yes": {"es": "Sí", "fr": "Oui", "de": "Ja", "ur": "جی ہاں", "hi": "हाँ", "ar": "نعم", "zh": "是", "ja": "はい", "ko": "네", "ru": "Да", "it": "Sì", "pt": "Sim"},
-                "no": {"es": "No", "fr": "Non", "de": "Nein", "ur": "نہیں", "hi": "नहीं", "ar": "لا", "zh": "不", "ja": "いいえ", "ko": "아니요", "ru": "Нет", "it": "No", "pt": "Não"},
-                "water": {"es": "Agua", "fr": "Eau", "de": "Wasser", "ur": "پانی", "hi": "पानी", "ar": "ماء", "zh": "水", "ja": "水", "ko": "물", "ru": "Вода", "it": "Acqua", "pt": "Água"},
-                "food": {"es": "Comida", "fr": "Nourriture", "de": "Essen", "ur": "کھانا", "hi": "खाना", "ar": "طعام", "zh": "食物", "ja": "食べ物", "ko": "음식", "ru": "Еда", "it": "Cibo", "pt": "Comida"},
-                "love": {"es": "Amor", "fr": "Amour", "de": "Liebe", "ur": "محبت", "hi": "प्यार", "ar": "حب", "zh": "爱", "ja": "愛", "ko": "사랑", "ru": "Любовь", "it": "Amore", "pt": "Amor"},
-                "good": {"es": "Bueno", "fr": "Bon", "de": "Gut", "ur": "اچھا", "hi": "अच्छा", "ar": "جيد", "zh": "好", "ja": "良い", "ko": "좋은", "ru": "Хороший", "it": "Buono", "pt": "Bom"},
-                "bad": {"es": "Malo", "fr": "Mauvais", "de": "Schlecht", "ur": "برا", "hi": "बुरा", "ar": "سيء", "zh": "坏", "ja": "悪い", "ko": "나쁜", "ru": "Плохой", "it": "Cattivo", "pt": "Mau"},
-                "morning": {"es": "Mañana", "fr": "Matin", "de": "Morgen", "ur": "صبح", "hi": "सुबह", "ar": "صباح", "zh": "早晨", "ja": "朝", "ko": "아침", "ru": "Утро", "it": "Mattina", "pt": "Manhã"},
-                "night": {"es": "Noche", "fr": "Nuit", "de": "Nacht", "ur": "رات", "hi": "रात", "ar": "ليل", "zh": "夜晚", "ja": "夜", "ko": "밤", "ru": "Ночь", "it": "Notte", "pt": "Noite"},
-                "house": {"es": "Casa", "fr": "Maison", "de": "Haus", "ur": "گھر", "hi": "घर", "ar": "بيت", "zh": "房子", "ja": "家", "ko": "집", "ru": "Дом", "it": "Casa", "pt": "Casa"},
-                "school": {"es": "Escuela", "fr": "École", "de": "Schule", "ur": "اسکول", "hi": "स्कूल", "ar": "مدرسة", "zh": "学校", "ja": "学校", "ko": "학교", "ru": "Школа", "it": "Scuola", "pt": "Escola"},
-                "book": {"es": "Libro", "fr": "Livre", "de": "Buch", "ur": "کتاب", "hi": "किताब", "ar": "كتاب", "zh": "书", "ja": "本", "ko": "책", "ru": "Книга", "it": "Libro", "pt": "Livro"},
-                "friend": {"es": "Amigo", "fr": "Ami", "de": "Freund", "ur": "دوست", "hi": "दोस्त", "ar": "صديق", "zh": "朋友", "ja": "友達", "ko": "친구", "ru": "Друг", "it": "Amico", "pt": "Amigo"},
-                "family": {"es": "Familia", "fr": "Famille", "de": "Familie", "ur": "خاندان", "hi": "परिवार", "ar": "عائلة", "zh": "家庭", "ja": "家族", "ko": "가족", "ru": "Семья", "it": "Famiglia", "pt": "Família"},
-                "beautiful": {"es": "Hermoso", "fr": "Beau", "de": "Schön", "ur": "خوبصورت", "hi": "सुंदर", "ar": "جميل", "zh": "美丽", "ja": "美しい", "ko": "아름다운", "ru": "Красивый", "it": "Bello", "pt": "Bonito"}
-            }
+            # Try partial match for common phrases
+            if not translated_text:
+                input_lower = input_text.lower()
+                for (english_text, lang_code), trans in SAMPLE_TRANSLATIONS.items():
+                    if lang_code == target_lang and english_text.lower() in input_lower:
+                        translated_text = trans
+                        break
             
-            input_lower = input_text.lower().strip()
-            if input_lower in simple_substitutions and target_lang in simple_substitutions[input_lower]:
-                translation = simple_substitutions[input_lower][target_lang]
-        
-        # If still no translation found, provide a helpful message with examples
-        if not translation:
-            available_phrases = ["Hello", "Thank you", "Good morning", "How are you?", "Please", "Goodbye", "Yes", "No", "Water", "Food", "I love you", "Good", "Bad", "Beautiful", "Friend", "Family"]
-            translation = f"Translation to {target_lang_name} not available for '{input_text}'.\n\n✅ Try these working phrases:\n" + "\n".join([f"• {phrase}" for phrase in available_phrases[:8]]) + f"\n\n🌟 {target_lang_name} is now supported! Use simple words and common phrases for best results."
+            # If still no translation found, provide helpful message
+            if not translated_text:
+                target_lang_name = self.target_language.get()
+                translated_text = f"Translation to {target_lang_name} not available for '{input_text}'. Try common phrases like: Hello, Thank you, Good morning, How are you?, Please, Goodbye, Yes, No, Water, Food, I love you."
         
         # Update output
         self.text_output.config(state="normal")
         self.text_output.delete("1.0", tk.END)
-        self.text_output.insert("1.0", translation)
+        self.text_output.insert("1.0", translated_text)
         self.text_output.config(state="disabled")
         
         # Update user progress
@@ -687,7 +650,7 @@ class LanguageBuddy:
         self.save_user_data()
         
         # Store translation for speech
-        self.current_translation = translation
+        self.current_translation = translated_text
     
     def speak_translation(self):
         """Speak the translation using text-to-speech"""
