@@ -1,0 +1,17 @@
+# AI-Powered Language Buddy Requirements
+# Install with: pip install -r requirements.txt
+
+# Text-to-Speech functionality
+pyttsx3>=2.90
+
+# Speech recognition functionality
+SpeechRecognition>=3.10.0
+
+# Audio processing (required for speech recognition)
+pyaudio>=0.2.11
+
+# GUI framework (usually comes with Python)
+# tkinter - comes built-in with Python
+
+# Optional: For better audio handling on Windows
+# pywin32>=304
