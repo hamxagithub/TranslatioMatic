@@ -1,7 +1,7 @@
 # AI-Powered Language Buddy Requirements
 # Install with: pip install -r requirements.txt
 
-# Text-to-Speech functionality
+# Text-to-Speech functionality (ESSENTIAL for voice features)
 pyttsx3>=2.90
 
 # Speech recognition functionality
@@ -10,8 +10,12 @@ SpeechRecognition>=3.10.0
 # Audio processing (required for speech recognition)
 pyaudio>=0.2.11
 
-# Google Translate API for real translation
+# Google Translate API for real translation (multiple options for reliability)
 googletrans==4.0.0rc1
+deep-translator>=1.11.4
+
+# HTTP requests for additional translation APIs
+requests>=2.25.0
 
 # GUI framework (usually comes with Python)
 # tkinter - comes built-in with Python

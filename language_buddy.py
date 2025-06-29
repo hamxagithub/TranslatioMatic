@@ -8,6 +8,8 @@ from tkinter import ttk, messagebox, scrolledtext
 import threading
 import json
 import os
+import sys
+import subprocess
 from datetime import datetime
 import webbrowser
 try:
@@ -23,12 +25,56 @@ except ImportError:
     speech_recognition_available = False
 
 try:
+    import requests
+    requests_available = True
+except ImportError:
+    requests_available = False
+
+try:
+    from deep_translator import GoogleTranslator
+    deep_translator_available = True
+except ImportError:
+    deep_translator_available = False
+
+try:
     from googletrans import Translator
     translator_available = True
     google_translator = Translator()
 except ImportError:
     translator_available = False
     google_translator = None
+
+def install_package(package_name):
+    """Automatically install a Python package using pip"""
+    try:
+        print(f"Installing {package_name}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+        print(f"{package_name} installed successfully!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to install {package_name}: {e}")
+        return False
+    except Exception as e:
+        print(f"Error installing {package_name}: {e}")
+        return False
+
+def ensure_speech_dependencies():
+    """Ensure speech-related dependencies are installed"""
+    global speech_available, pyttsx3
+    
+    if not speech_available:
+        print("pyttsx3 not found, attempting to install...")
+        success = install_package("pyttsx3")
+        if success:
+            try:
+                import pyttsx3
+                speech_available = True
+                print("pyttsx3 successfully imported after installation!")
+                return True
+            except ImportError:
+                print("Failed to import pyttsx3 even after installation")
+                return False
+    return speech_available
 
 # Language data - In a real app, this would connect to translation APIs
 LANGUAGES = {
@@ -302,14 +348,9 @@ class LanguageBuddy:
         self.root.geometry("800x600")
         self.root.configure(bg="#f0f8ff")
         
-        # Initialize text-to-speech
+        # Initialize text-to-speech with better error handling
         self.tts_engine = None
-        if speech_available:
-            try:
-                self.tts_engine = pyttsx3.init()
-                self.tts_engine.setProperty('rate', 150)
-            except:
-                pass
+        self.init_tts()
         
         # Initialize speech recognition
         self.recognizer = None
@@ -328,6 +369,104 @@ class LanguageBuddy:
         self.target_language = tk.StringVar(value="Spanish")
         
         self.create_main_interface()
+    
+    def init_tts(self):
+        """Initialize text-to-speech engine"""
+        global speech_available, pyttsx3
+        
+        # Ensure the library is available
+        if not speech_available:
+            try:
+                import pyttsx3
+                speech_available = True
+            except ImportError:
+                return False
+        
+        if speech_available:
+            try:
+                self.tts_engine = pyttsx3.init()
+                # Configure speech settings
+                self.tts_engine.setProperty('rate', 150)  # Speed of speech
+                self.tts_engine.setProperty('volume', 0.9)  # Volume level (0.0 to 1.0)
+                
+                # Configure the best available voice
+                self.configure_voice()
+                
+                print("Text-to-speech initialized successfully")
+                return True
+            except Exception as e:
+                print(f"TTS initialization error: {e}")
+                self.tts_engine = None
+                return False
+        return False
+    
+    def configure_voice(self):
+        """Configure and select the best available voice"""
+        if not self.tts_engine:
+            return False
+        
+        try:
+            voices = self.tts_engine.getProperty('voices')
+            if not voices:
+                print("No voices available")
+                return False
+            
+            print(f"Available voices: {len(voices)}")
+            
+            # Try to find the best voice based on language and gender
+            best_voice = None
+            female_voice = None
+            male_voice = None
+            
+            for voice in voices:
+                voice_info = str(voice.id).lower()
+                print(f"Voice: {voice.id} - {voice.name}")
+                
+                # Look for female voices (often clearer for language learning)
+                if any(indicator in voice_info for indicator in ['female', 'woman', 'zira', 'eva', 'helena']):
+                    female_voice = voice
+                
+                # Look for male voices as backup
+                if any(indicator in voice_info for indicator in ['male', 'man', 'david', 'mark', 'ricardo']):
+                    male_voice = voice
+                
+                # Look for high-quality voices
+                if any(indicator in voice_info for indicator in ['enhanced', 'premium', 'neural']):
+                    best_voice = voice
+            
+            # Select the best available voice
+            selected_voice = best_voice or female_voice or male_voice or voices[0]
+            
+            self.tts_engine.setProperty('voice', selected_voice.id)
+            print(f"Selected voice: {selected_voice.id} - {selected_voice.name}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Voice configuration error: {e}")
+            return False
+        
+    def get_voice_info(self):
+        """Get information about available voices"""
+        if not self.tts_engine:
+            return "TTS engine not initialized"
+        
+        try:
+            voices = self.tts_engine.getProperty('voices')
+            if not voices:
+                return "No voices available"
+            
+            voice_info = []
+            current_voice = self.tts_engine.getProperty('voice')
+            
+            for i, voice in enumerate(voices):
+                is_current = "✓" if voice.id == current_voice else " "
+                voice_info.append(f"{is_current} {i+1}. {voice.name} ({voice.id})")
+            
+            return "\n".join(voice_info)
+            
+        except Exception as e:
+            return f"Error getting voice info: {e}"
         
     def load_user_data(self):
         """Load user progress from file"""
@@ -596,49 +735,46 @@ class LanguageBuddy:
         copy_btn.pack(side="left", padx=5)
     
     def translate_text(self):
-        """Translate the input text using Google Translate API"""
+        """Translate the input text using multiple translation methods for maximum reliability"""
         input_text = self.text_input.get("1.0", tk.END).strip()
         if not input_text:
             messagebox.showwarning("No Text", "Please enter some text to translate!")
             return
         
-        target_lang = LANGUAGES.get(self.target_language.get(), "es")
-        translated_text = ""
+        # Show progress indicator
+        self.text_output.config(state="normal")
+        self.text_output.delete("1.0", tk.END)
+        self.text_output.insert("1.0", "🔄 Translating... Please wait...")
+        self.text_output.config(state="disabled")
+        self.root.update()
         
-        # Try Google Translate first
-        if translator_available and google_translator:
+        # Use the robust translation helper
+        translated_text = self.translate_any_text(input_text)
+        
+        # If translation failed for long text, try splitting into sentences
+        if "not available" in translated_text and len(input_text) > 100:
             try:
-                translation = google_translator.translate(input_text, dest=target_lang)
-                translated_text = translation.text
+                sentences = input_text.replace('!', '.').replace('?', '.').split('.')
+                translated_sentences = []
+                
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if sentence:
+                        trans_sentence = self.translate_any_text(sentence)
+                        if "not available" not in trans_sentence:
+                            translated_sentences.append(trans_sentence)
+                        else:
+                            translated_sentences.append(sentence)
+                
+                if translated_sentences:
+                    translated_text = '. '.join(translated_sentences)
             except Exception as e:
-                print(f"Google Translate error: {e}")
-                translated_text = None
+                print(f"Sentence splitting error: {e}")
         
-        # If Google Translate fails, use fallback dictionary
-        if not translated_text:
-            # Try exact match first
-            translated_text = SAMPLE_TRANSLATIONS.get((input_text, target_lang))
-            
-            # Try case-insensitive match
-            if not translated_text:
-                for (english_text, lang_code), trans in SAMPLE_TRANSLATIONS.items():
-                    if english_text.lower() == input_text.lower() and lang_code == target_lang:
-                        translated_text = trans
-                        break
-            
-            # Try partial match for common phrases
-            if not translated_text:
-                input_lower = input_text.lower()
-                for (english_text, lang_code), trans in SAMPLE_TRANSLATIONS.items():
-                    if lang_code == target_lang and english_text.lower() in input_lower:
-                        translated_text = trans
-                        break
-            
-            # If still no translation found, provide helpful message
-            if not translated_text:
-                target_lang_name = self.target_language.get()
-                translated_text = f"Translation to {target_lang_name} not available for '{input_text}'. Try common phrases like: Hello, Thank you, Good morning, How are you?, Please, Goodbye, Yes, No, Water, Food, I love you."
-        
+        self.display_translation(translated_text)
+    
+    def display_translation(self, translated_text):
+        """Helper method to display translation and update progress"""
         # Update output
         self.text_output.config(state="normal")
         self.text_output.delete("1.0", tk.END)
@@ -653,22 +789,103 @@ class LanguageBuddy:
         self.current_translation = translated_text
     
     def speak_translation(self):
-        """Speak the translation using text-to-speech"""
+        """Speak the translation using text-to-speech with automatic installation"""
         if not hasattr(self, 'current_translation'):
             messagebox.showwarning("No Translation", "Please translate some text first!")
             return
         
-        if not speech_available or not self.tts_engine:
-            messagebox.showinfo("Speech Not Available", 
-                              "Text-to-speech is not available. Please install pyttsx3:\n\n"
-                              "pip install pyttsx3")
-            return
+        # Check if TTS is available, if not try to install it
+        if not speech_available:
+            response = messagebox.askyesno("Install Speech Library", 
+                                         "Text-to-speech library (pyttsx3) is not installed.\n\n"
+                                         "Would you like to install it automatically?")
+            if response:
+                # Show progress window
+                progress_window = tk.Toplevel(self.root)
+                progress_window.title("Installing Speech Library")
+                progress_window.geometry("400x150")
+                progress_window.configure(bg="#f0f8ff")
+                
+                progress_label = tk.Label(progress_window, 
+                                        text="Installing pyttsx3...\nPlease wait...",
+                                        bg="#f0f8ff", font=("Arial", 12))
+                progress_label.pack(pady=20)
+                
+                progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
+                progress_bar.pack(pady=10, padx=20, fill='x')
+                progress_bar.start()
+                
+                def install_and_close():
+                    success = ensure_speech_dependencies()
+                    progress_bar.stop()
+                    progress_window.destroy()
+                    
+                    if success:
+                        messagebox.showinfo("Success", 
+                                          "pyttsx3 installed successfully!\n\n"
+                                          "Initializing text-to-speech...")
+                        # Reinitialize TTS
+                        self.init_tts()
+                        # Try speaking again
+                        self.speak_translation()
+                    else:
+                        messagebox.showerror("Installation Failed", 
+                                           "Failed to install pyttsx3.\n\n"
+                                           "Please install it manually using:\n"
+                                           "pip install pyttsx3")
+                
+                # Run installation in a separate thread
+                install_thread = threading.Thread(target=install_and_close)
+                install_thread.daemon = True
+                install_thread.start()
+                return
+            else:
+                return
         
+        if not self.tts_engine:
+            self.init_tts()
+        
+        if not self.tts_engine:
+            messagebox.showerror("Speech Error", 
+                               "Could not initialize text-to-speech engine.\n\n"
+                               "Please restart the application.")
+            return
+
         try:
-            self.tts_engine.say(self.current_translation)
-            self.tts_engine.runAndWait()
+            # Clean the text for better speech
+            text_to_speak = self.current_translation
+            
+            # Remove error messages from speech
+            if "⚠️" in text_to_speak or "Translation to" in text_to_speak and "failed" in text_to_speak:
+                messagebox.showinfo("Cannot Speak", "Cannot speak error messages. Please translate some text first.")
+                return
+            
+            print(f"Speaking: {text_to_speak}")
+            
+            # Speak the text in a separate thread to avoid freezing UI
+            def speak_in_thread():
+                try:
+                    self.tts_engine.say(text_to_speak)
+                    self.tts_engine.runAndWait()
+                    print("Speech completed successfully")
+                except Exception as e:
+                    print(f"Speech error: {e}")
+            
+            speak_thread = threading.Thread(target=speak_in_thread)
+            speak_thread.daemon = True
+            speak_thread.start()
+            
         except Exception as e:
-            messagebox.showerror("Speech Error", f"Could not speak the translation: {str(e)}")
+            print(f"Speech error: {e}")
+            messagebox.showerror("Speech Error", 
+                               f"An error occurred while speaking:\n{str(e)}")
+            messagebox.showerror("Speech Error", 
+                               f"Could not speak the translation.\n\n"
+                               f"Error: {str(e)}\n\n"
+                               f"Try:\n"
+                               f"1. Restart the application\n"
+                               f"2. Check your audio settings\n"
+                               f"3. Make sure speakers are connected")
     
     def copy_translation(self):
         """Copy translation to clipboard"""
@@ -847,34 +1064,8 @@ class LanguageBuddy:
             self.speech_input.insert("1.0", text)
             self.speech_input.config(state="disabled")
             
-            # Translate using the same improved logic as text translation
-            target_lang = LANGUAGES.get(self.target_language.get(), "es")
-            target_lang_name = self.target_language.get()
-            translation = SAMPLE_TRANSLATIONS.get((text, target_lang))
-            
-            # Try case-insensitive match if exact match fails
-            if not translation:
-                for (english_text, lang_code), trans in SAMPLE_TRANSLATIONS.items():
-                    if english_text.lower() == text.lower() and lang_code == target_lang:
-                        translation = trans
-                        break
-            
-            # Try simple word substitutions
-            if not translation:
-                simple_substitutions = {
-                    "hello": {"es": "Hola", "fr": "Bonjour", "de": "Hallo", "ur": "السلام علیکم", "hi": "नमस्ते", "ar": "مرحبا"},
-                    "thanks": {"es": "Gracias", "fr": "Merci", "de": "Danke", "ur": "شکریہ", "hi": "धन्यवाद", "ar": "شكرا"},
-                    "yes": {"es": "Sí", "fr": "Oui", "de": "Ja", "ur": "جی ہاں", "hi": "हाँ", "ar": "نعم"},
-                    "no": {"es": "No", "fr": "Non", "de": "Nein", "ur": "نہیں", "hi": "नहीं", "ar": "لا"}
-                }
-                
-                text_lower = text.lower().strip()
-                if text_lower in simple_substitutions and target_lang in simple_substitutions[text_lower]:
-                    translation = simple_substitutions[text_lower][target_lang]
-            
-            # If still no translation found, provide helpful message
-            if not translation:
-                translation = f"Translation to {target_lang_name} not available for '{text}'. Try saying: Hello, Thank you, Good morning, Yes, or No."
+            # Use the robust translation helper (same as text translation)
+            translation = self.translate_any_text(text)
             
             # Update output
             self.speech_output.config(state="normal")
@@ -1115,18 +1306,92 @@ class LanguageBuddy:
         ).pack(pady=(5, 10))
     
     def practice_word(self, word):
-        """Practice pronunciation of a word"""
-        if not speech_available or not self.tts_engine:
-            messagebox.showinfo("Speech Not Available", 
-                              "Text-to-speech is not available. Please install pyttsx3:\n\n"
-                              "pip install pyttsx3")
-            return
+        """Practice pronunciation of a word with automatic TTS installation"""
+        if not speech_available:
+            response = messagebox.askyesno("Install Speech Library", 
+                                         "Text-to-speech library (pyttsx3) is not installed.\n\n"
+                                         "Would you like to install it automatically?")
+            if response:
+                # Show progress window
+                progress_window = tk.Toplevel(self.root)
+                progress_window.title("Installing Speech Library")
+                progress_window.geometry("400x150")
+                progress_window.configure(bg="#f0f8ff")
+                
+                progress_label = tk.Label(progress_window, 
+                                        text="Installing pyttsx3...\nPlease wait...",
+                                        bg="#f0f8ff", font=("Arial", 12))
+                progress_label.pack(pady=20)
+                
+                progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
+                progress_bar.pack(pady=10, padx=20, fill='x')
+                progress_bar.start()
+                
+                def install_and_close():
+                    success = ensure_speech_dependencies()
+                    progress_bar.stop()
+                    progress_window.destroy()
+                    
+                    if success:
+                        messagebox.showinfo("Success", 
+                                          "pyttsx3 installed successfully!\n\n"
+                                          "Initializing text-to-speech...")
+                        # Reinitialize TTS
+                        self.init_tts()
+                        # Try practicing again
+                        self.practice_word(word)
+                    else:
+                        messagebox.showerror("Installation Failed", 
+                                           "Failed to install pyttsx3.\n\n"
+                                           "Please install it manually using:\n"
+                                           "pip install pyttsx3")
+                
+                # Run installation in a separate thread
+                install_thread = threading.Thread(target=install_and_close)
+                install_thread.daemon = True
+                install_thread.start()
+                return
+            else:
+                return
         
+        if not self.tts_engine:
+            self.init_tts()
+        
+        if not self.tts_engine:
+            messagebox.showerror("Speech Error", 
+                               "Could not initialize text-to-speech engine.\n\n"
+                               "Please restart the application.")
+            return
+
         try:
-            self.tts_engine.say(word)
-            self.tts_engine.runAndWait()
+            # Create a copy of the engine for practice with slower rate
+            practice_rate = 120  # Slower for learning
+            original_rate = self.tts_engine.getProperty('rate')
+            
+            self.tts_engine.setProperty('rate', practice_rate)
+            
+            print(f"Practicing word: {word}")
+            
+            # Speak the word in a separate thread
+            def speak_practice():
+                try:
+                    self.tts_engine.say(word)
+                    self.tts_engine.runAndWait()
+                    # Reset rate back to normal
+                    self.tts_engine.setProperty('rate', original_rate)
+                    print("Word practice completed")
+                except Exception as e:
+                    print(f"Practice speech error: {e}")
+            
+            speak_thread = threading.Thread(target=speak_practice)
+            speak_thread.daemon = True
+            speak_thread.start()
+            
         except Exception as e:
-            messagebox.showerror("Speech Error", f"Could not speak the word: {str(e)}")
+            print(f"Practice speech error: {e}")
+            messagebox.showerror("Speech Error", 
+                               f"Could not speak the word: {str(e)}\n\n"
+                               f"Try restarting the application or check your audio settings.")
     
     def check_quiz_answer(self):
         """Check the quiz answer"""
@@ -1201,6 +1466,137 @@ Visit our website for tutorials and guides.
     def run(self):
         """Start the application"""
         self.root.mainloop()
+    
+    def translate_any_text(self, input_text):
+        """Robust translation method that tries multiple APIs and ensures real translation"""
+        target_lang = LANGUAGES.get(self.target_language.get(), "es")
+        target_lang_name = self.target_language.get()
+        
+        print(f"Translating '{input_text}' to {target_lang} ({target_lang_name})")
+        print(f"Available services: deep_translator={deep_translator_available}, googletrans={translator_available}, requests={requests_available}")
+        
+        # Method 1: Try Deep Translator (Google Translate via deep-translator)
+        if deep_translator_available:
+            try:
+                translator = GoogleTranslator(source='auto', target=target_lang)
+                translated_text = translator.translate(input_text)
+                if translated_text and translated_text.strip() and translated_text.lower() != input_text.lower():
+                    print(f"Deep Translator success: {translated_text}")
+                    return translated_text
+                else:
+                    print(f"Deep Translator returned same text or empty: {translated_text}")
+            except Exception as e:
+                print(f"Deep Translator error: {e}")
+        
+        # Method 2: Try original googletrans
+        if translator_available and google_translator:
+            try:
+                translation = google_translator.translate(input_text, dest=target_lang)
+                if translation and translation.text and translation.text.lower() != input_text.lower():
+                    print(f"GoogleTrans success: {translation.text}")
+                    return translation.text
+                else:
+                    print(f"GoogleTrans returned same text or empty: {translation.text if translation else 'None'}")
+            except Exception as e:
+                print(f"GoogleTrans error: {e}")
+        
+        # Method 3: Try MyMemory API via requests
+        if requests_available:
+            try:
+                url = f"https://api.mymemory.translated.net/get"
+                params = {
+                    'q': input_text,
+                    'langpair': f'en|{target_lang}'
+                }
+                response = requests.get(url, params=params, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('responseStatus') == 200:
+                        translated_text = data['responseData']['translatedText']
+                        if translated_text and translated_text.lower() != input_text.lower():
+                            print(f"MyMemory API success: {translated_text}")
+                            return translated_text
+                        else:
+                            print(f"MyMemory returned same text: {translated_text}")
+            except Exception as e:
+                print(f"MyMemory API error: {e}")
+        
+     
+        if requests_available:
+            try:
+                url = "https://libretranslate.de/translate"
+                data = {
+                    'q': input_text,
+                    'source': 'en',
+                    'target': target_lang,
+                    'format': 'text'
+                }
+                response = requests.post(url, data=data, timeout=10)
+                if response.status_code == 200:
+                    result = response.json()
+                    translated_text = result.get('translatedText', '')
+                    if translated_text and translated_text.lower() != input_text.lower():
+                        print(f"LibreTranslate success: {translated_text}")
+                        return translated_text
+                    else:
+                        print(f"LibreTranslate returned same text: {translated_text}")
+            except Exception as e:
+                print(f"LibreTranslate error: {e}")
+        
+        # Method 5: Fallback to dictionary
+        translated_text = SAMPLE_TRANSLATIONS.get((input_text, target_lang))
+        
+        # Try case-insensitive match
+        if not translated_text:
+            for (english_text, lang_code), trans in SAMPLE_TRANSLATIONS.items():
+                if english_text.lower() == input_text.lower() and lang_code == target_lang:
+                    translated_text = trans
+                    break
+        
+        if translated_text:
+            print(f"Dictionary match found: {translated_text}")
+            return translated_text
+        
+        # Method 6: Simple word substitutions
+        simple_substitutions = {
+            "hello": {"es": "Hola", "fr": "Bonjour", "de": "Hallo", "ur": "السلام علیکم", "hi": "नमस्ते", "ar": "مرحبا"},
+            "hi": {"es": "Hola", "fr": "Salut", "de": "Hallo", "ur": "السلام علیکم", "hi": "नमस्ते", "ar": "مرحبا"},
+            "thanks": {"es": "Gracias", "fr": "Merci", "de": "Danke", "ur": "شکریہ", "hi": "धन्यवाद", "ar": "شكرا"},
+            "thank you": {"es": "Gracias", "fr": "Merci", "de": "Danke", "ur": "شکریہ", "hi": "धन्यवाद", "ar": "شكرا"},
+            "yes": {"es": "Sí", "fr": "Oui", "de": "Ja", "ur": "جی ہاں", "hi": "हाँ", "ar": "نعم"},
+            "no": {"es": "No", "fr": "Non", "de": "Nein", "ur": "نہیں", "hi": "नहीं", "ar": "لا"},
+            "goodbye": {"es": "Adiós", "fr": "Au revoir", "de": "Auf Wiedersehen", "ur": "الوداع", "hi": "अलविदा", "ar": "وداعا"},
+            "good morning": {"es": "Buenos días", "fr": "Bonjour", "de": "Guten Morgen", "ur": "صبح بخیر", "hi": "सुप्रभात", "ar": "صباح الخير"},
+            "good night": {"es": "Buenas noches", "fr": "Bonne nuit", "de": "Gute Nacht", "ur": "شب بخیر", "hi": "शुभ रात्रि", "ar": "تصبح على خير"},
+            "please": {"es": "Por favor", "fr": "S'il vous plaît", "de": "Bitte", "ur": "براہ کرم", "hi": "कृपया", "ar": "من فضلك"},
+            "excuse me": {"es": "Disculpe", "fr": "Excusez-moi", "de": "Entschuldigung", "ur": "معذرت", "hi": "माफ़ करें", "ar": "عذرا"}
+        }
+        
+        text_lower = input_text.lower().strip()
+        if text_lower in simple_substitutions and target_lang in simple_substitutions[text_lower]:
+            translated_text = simple_substitutions[text_lower][target_lang]
+            print(f"Simple substitution found: {translated_text}")
+            return translated_text
+        
+        # Method 7: Try word-by-word translation for simple phrases
+        words = input_text.lower().split()
+        if len(words) <= 3:  # Only for short phrases
+            translated_words = []
+            for word in words:
+                if word in simple_substitutions and target_lang in simple_substitutions[word]:
+                    translated_words.append(simple_substitutions[word][target_lang])
+                else:
+                    translated_words.append(word)  # Keep original if no translation
+            
+            if any(tw != w for tw, w in zip(translated_words, words)):  # At least one word was translated
+                result = ' '.join(translated_words)
+                print(f"Word-by-word translation: {result}")
+                return result
+        
+        # Final fallback - clear error message
+        error_msg = f"⚠️ Translation to {target_lang_name} failed. All translation services are currently unavailable. Please check your internet connection and try again."
+        print(f"All translation methods failed for: {input_text}")
+        return error_msg
 
 if __name__ == "__main__":
     app = LanguageBuddy()
